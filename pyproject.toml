@@ -17,7 +17,7 @@ dependencies = [
 mcp = ["fastmcp>=2.0"]
 
 [project.urls]
-Homepage = "https://github.com/maxwellburton/floating-point-ranger"
+Homepage = "https://github.com/maxburto/floating-point-ranger"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]

@@ -43,7 +43,7 @@ whose owner won't vouch for it - and that enforcement is off by default.
 ## Quickstart
 
 ```sh
-uv pip install "floating-point-ranger @ git+https://github.com/maxwellburton/floating-point-ranger@v0.2.0"
+uv pip install "floating-point-ranger @ git+https://github.com/maxburto/floating-point-ranger@v0.2.0"
 cp config.example.yaml /etc/gpu-manager/config.yaml   # edit: your GPU UUIDs + roles
 GPU_MANAGER_CONFIG=/etc/gpu-manager/config.yaml uvicorn gpu_manager.app:APP --port 8768
 ```
