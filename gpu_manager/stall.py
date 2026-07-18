@@ -7,7 +7,10 @@ answer / no health_url → FLAG it in the journal with resolved owner attributio
 `enforce` is on — evict it (stop its unit, or SIGTERM the pid) and release the lease.
 
 Hard guardrails, always: never a model-manager lease (models idle-drain themselves), never a
-lease on an interactive-role GPU (the desktop is never a target), never a working or vouched job.
+working or vouched job, and never the desktop itself (desktop apps hold no leases). Leases ON
+an interactive-role card are skipped by default; with `watch_interactive` on they go through
+the normal pathway unless their provenance matches `desktop_exempt_patterns` (a wrapped
+desktop application is left alone even when it looks stalled).
 NO operator alerts — this module never touches the notify path; flagged jobs live in the
 log/dashboard for periodic review. Feature-flagged: `stall_watch.enabled=false` → pure idle-drain.
 """
@@ -29,6 +32,7 @@ from .config import Config
 
 _idle_since: dict[str, float] = {}   # lease_id -> when it first went idle
 _logged: set[str] = set()            # lease_ids already logged STALLED (flag-only de-dupe)
+_exempt_logged: set[str] = set()     # lease_ids already logged desktop-exempt (log-once)
 _flagged: list[dict] = []            # last tick's flagged jobs (for /v1/gpu/status + dashboard)
 
 
@@ -122,10 +126,26 @@ def _tick(cfg: Config, leases: Leases) -> None:
     flagged: list[dict] = []
     for h in active:
         lid = h["id"]
-        # eligibility: a local pid, not a manager-owned model, not on the interactive card
+        # eligibility: a local pid, not a manager-owned model
         if (not h.get("pid") or h.get("initiator") == "model-manager"
-                or h["gpu_uuid"] in interactive or h["gpu_uuid"] not in local_uuids):
+                or h["gpu_uuid"] not in local_uuids):
             continue
+        if h["gpu_uuid"] in interactive:
+            if not sw.watch_interactive:
+                continue  # legacy behavior: interactive-card leases are never examined
+            # Provenance gate: a lease that belongs to a desktop-session APPLICATION
+            # (matched by owner/cmdline pattern) is left alone even if it looks stalled —
+            # agent/service-launched jobs fall through to the normal pathway.
+            if sw.desktop_exempt_patterns:
+                info = owners.attribute(h.get("pid"))
+                hay = f"{info.get('owner', '')} {info.get('cmd', '')}"
+                if any(pat in hay for pat in sw.desktop_exempt_patterns):
+                    if lid not in _exempt_logged:
+                        _log(f"lease {lid[:8]} ({h['label']}) exempt: desktop provenance "
+                             f"({info.get('owner')})")
+                        _exempt_logged.add(lid)
+                    _idle_since.pop(lid, None)
+                    continue
         live_ids.add(lid)
         if activity.get(lid):
             _idle_since.pop(lid, None)
@@ -170,6 +190,7 @@ def _tick(cfg: Config, leases: Leases) -> None:
     for lid in [k for k in _idle_since if k not in live_ids]:  # forget gone leases
         _idle_since.pop(lid, None)
         _logged.discard(lid)
+    _exempt_logged.intersection_update({h["id"] for h in active})  # forget released leases
     _flagged = flagged
 
 

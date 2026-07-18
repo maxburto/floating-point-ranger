@@ -99,6 +99,14 @@ class StallWatchCfg:
     stall_window_s: int = 1500   # 25 min near-idle before a job is even suspected stalled
     active_util_pct: int = 5     # smUtil / device-wide util below this = "no GPU work this tick"
     health_timeout_s: int = 5    # owner health-ping GET timeout
+    # Interactive-card coverage (off = legacy behavior: interactive-card leases are never
+    # examined). When on, leases there go through the normal stall pathway UNLESS the
+    # lease's provenance matches desktop_exempt_patterns — substring match against the
+    # attributed owner (unit/scope/container name) and cmdline, the rogue-watch idiom.
+    # Desktop applications hold no leases, so this exemption is a guard for wrapped or
+    # interactive-leased workflows, not the desktop itself (which is never a target).
+    watch_interactive: bool = False
+    desktop_exempt_patterns: list = field(default_factory=list)
 
 
 @dataclass

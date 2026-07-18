@@ -34,3 +34,11 @@ sources: []
 #    name: Example RTX 3060 Ti
 #    role: interactive
 #    batch_spillover_max_mib: 4096
+
+# Stall-watch interactive-card coverage (optional; requires stall_watch.enabled).
+# watch_interactive: true lets leases on interactive cards go through the normal stall
+# pathway; desktop_exempt_patterns exempts leases whose owner/cmdline matches (wrapped
+# desktop applications) — they are left alone even when they look stalled.
+#stall_watch:
+#  watch_interactive: true
+#  desktop_exempt_patterns: [blender, gimp, steam]

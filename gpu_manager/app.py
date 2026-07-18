@@ -74,7 +74,7 @@ async def _lifespan(app: FastAPI):
             await t
 
 
-APP = FastAPI(title="gpu-manager", version="0.3.0", lifespan=_lifespan)
+APP = FastAPI(title="gpu-manager", version="0.4.0", lifespan=_lifespan)
 
 
 def _auth(authorization: str | None) -> None:
