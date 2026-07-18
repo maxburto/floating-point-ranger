@@ -120,7 +120,7 @@ class Leases:
         return expired
 
     # -- admission ----------------------------------------------------------
-    def _resolve_gpu(self, gpu: str, capability: str | None = None) -> list:
+    def _resolve_gpu(self, gpu: str, capability: str | None = None, vram_mib: int = 0) -> list:
         """A UUID, or a role name → candidate GpuCfgs. For a ROLE ask carrying a capability we
         narrow to the cards that offer it, which is what implements the ROUTING POLICY: a
         `vulkan` batch job resolves to the AMD card rather than a scarce CUDA card. An explicit
@@ -132,12 +132,27 @@ class Leases:
         if capability:
             # EXCLUSIVE, never best-effort: a "no match → fall back to all cards" widening is
             # how a job lands on a card that cannot run it.
-            return [g for g in cands if capability in g.caps]
-        # No capability declared = a legacy caller. `gpu-lease` defaults to `--gpu batch` and
-        # sends none, then pins CUDA_VISIBLE_DEVICES to whatever card we return — so handing it
-        # a REMOTE AMD card silently gives its CUDA job zero devices (and strands a lease on a
-        # card in another guest). Legacy callers only ever get local cards.
-        return [g for g in cands if g.probe != "remote-amd"]
+            cands = [g for g in cands if capability in g.caps]
+        else:
+            # No capability declared = a legacy caller. `gpu-lease` defaults to `--gpu batch`
+            # and sends none, then pins CUDA_VISIBLE_DEVICES to whatever card we return — so
+            # handing it a REMOTE AMD card silently gives its CUDA job zero devices (and
+            # strands a lease on a card in another guest). Legacy callers only ever get local
+            # cards.
+            cands = [g for g in cands if g.probe != "remote-amd"]
+        # Bounded spillover: a role ask may ALSO be offered interactive cards that opt in
+        # (batch_spillover_max_mib > 0) — appended LAST, so batch-role cards are always
+        # preferred and the interactive card only takes overflow. Only for BOUNDED asks
+        # (0 < vram_mib <= cap): a job that won't declare its footprint never gets the
+        # desktop card. Interactive priority itself is the hold machinery, which gates
+        # admission on these cards exactly as it always has.
+        if gpu != "interactive":
+            spill = [g for g in self.cfg.gpus
+                     if g.role == "interactive" and g.probe != "remote-amd"
+                     and 0 < vram_mib <= g.batch_spillover_max_mib
+                     and (capability in g.caps if capability else True)]
+            cands = cands + [g for g in spill if g not in cands]
+        return cands
 
     def request(self, gpu: str, initiator: str, label: str, vram_mib: int = 0,
                 exclusive: bool = True, ttl_s: int = 900, pid: int | None = None,
@@ -155,7 +170,7 @@ class Leases:
             return {"granted": False, "retry_in_s": None, "reasons": [
                 f"capability '{capability}' is never leased — fixed-function transcode runs "
                 f"inline and is never gated"]}
-        candidates = self._resolve_gpu(gpu, capability)
+        candidates = self._resolve_gpu(gpu, capability, vram_mib)
         if not candidates:
             why = (f"no card in role '{gpu}' offers capability '{capability}'" if capability
                    else f"unknown gpu or role: {gpu}")

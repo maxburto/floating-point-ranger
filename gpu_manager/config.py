@@ -22,6 +22,12 @@ class GpuCfg:
     probe: str = "nvml"           # nvml (local NVIDIA) | remote-amd (remote reporter agent)
     agent_url: str | None = None  # remote-amd: base URL of the card's reporter agent
     capabilities: list[str] = field(default_factory=list)  # cuda | vulkan | vaapi
+    # Interactive cards only: allow BOUNDED batch spillover. A role-ask batch job whose
+    # declared VRAM floor is 0 < vram_mib <= this cap may be offered this card as a
+    # LAST-RESORT candidate (batch-role cards are always tried first). 0 = never (default).
+    # Interactive priority is preserved by the existing hold machinery: presence/manual
+    # holds block new admission here, and running spillover jobs are never preempted.
+    batch_spillover_max_mib: int = 0
 
     @property
     def caps(self) -> list[str]:

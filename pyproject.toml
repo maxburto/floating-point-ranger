@@ -1,6 +1,6 @@
 [project]
 name = "floating-point-ranger"
-version = "0.2.0"
+version = "0.3.0"
 description = "GPU arbitration for shared hosts: check-and-defer lease admission, model residency, stall detection, cross-node AMD reporting, and MPS batch concurrency — without ever preempting anything."
 readme = "README.md"
 license = { file = "LICENSE" }

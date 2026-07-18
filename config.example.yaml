@@ -25,3 +25,12 @@ sources: []
 #    initiator: my_exapp
 #    enabled: false                  # needs EXAPP_USER/EXAPP_PASSWORD in the env file
 #    options: { url: https://cloud.example.com/index.php/apps/app_api/proxy/my_exapp/api/v1/jobs }
+
+# Bounded batch spillover onto an interactive card (optional). On an interactive-role
+# gpu entry, set batch_spillover_max_mib: <MiB> to let role-ask batch jobs that declare
+# a VRAM floor at or below the cap use the card as a LAST resort (batch cards are always
+# tried first; holds still pause admission; running jobs are never preempted; 0 = off).
+#  - uuid: GPU-00000000-0000-0000-0000-000000000000
+#    name: Example RTX 3060 Ti
+#    role: interactive
+#    batch_spillover_max_mib: 4096
