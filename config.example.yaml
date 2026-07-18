@@ -1,0 +1,27 @@
+# gpu-manager configuration (example).
+# Copy to config.yaml and adjust. UUIDs come from: nvidia-smi --query-gpu=name,uuid --format=csv
+bind: 0.0.0.0
+port: 8768
+hold_dir: /run/gpu-manager           # hold-<GPU-UUID>[.reason] marker files pause new admission
+
+gpus:
+  - uuid: GPU-00000000-0000-0000-0000-000000000000
+    name: Example RTX 3060 12GB
+    role: batch                      # batch | interactive
+    host: local
+
+# Legacy/foreign flock lease files to surface (read-only probe).
+locks: []
+#  - path: /run/gpu-3060.lock
+#    gpu_uuid: GPU-00000000-0000-0000-0000-000000000000
+#    label: ocr-worker lease
+
+# External job queues merged into /v1/gpu/queue.
+sources: []
+#  - kind: sqlite-photogrammetry
+#    initiator: photogrammetry
+#    options: { path: /opt/photogrammetry/catalog.db }
+#  - kind: exapp-jobs
+#    initiator: my_exapp
+#    enabled: false                  # needs EXAPP_USER/EXAPP_PASSWORD in the env file
+#    options: { url: https://cloud.example.com/index.php/apps/app_api/proxy/my_exapp/api/v1/jobs }

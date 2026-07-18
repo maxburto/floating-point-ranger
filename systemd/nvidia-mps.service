@@ -1,0 +1,38 @@
+[Unit]
+# NVIDIA MPS control daemon, pinned to the BATCH card only (GPU0). Lets batch jobs co-execute
+# there instead of serialising on the exclusive lease lane.
+# The interactive card (GPU1, the desktop) deliberately gets NO MPS daemon: MPS does not
+# arbitrate the desktop's GL context, so interactive priority stays an ADMISSION mechanism
+# (hold markers), never GPU-level scheduling.
+Description=NVIDIA CUDA MPS control daemon — Floating-Point Ranger batch-card concurrency
+After=network.target
+Before=gpu-manager.service
+
+[Service]
+Type=forking
+# NOTE: this uuid must match `mps.gpu_uuid` in /opt/gpu-manager/config.yaml.
+Environment=CUDA_VISIBLE_DEVICES=GPU-00000000-0000-0000-0000-000000000000
+# /run, not /tmp: the manager's fail-safe trusts the pid file in this directory, and
+# world-writable /tmp would let any local user plant one. RuntimeDirectory also gets us
+# automatic creation (0755 root) and removal on stop.
+RuntimeDirectory=nvidia-mps
+RuntimeDirectoryMode=0755
+Environment=CUDA_MPS_PIPE_DIRECTORY=/run/nvidia-mps
+Environment=CUDA_MPS_LOG_DIRECTORY=/var/log/nvidia-mps
+# PIDFile makes systemd track the real main pid for a forking service AND asserts the pid-file
+# name the manager's server_up() depends on.
+PIDFile=/run/nvidia-mps/nvidia-cuda-mps-control.pid
+ExecStartPre=/bin/mkdir -p /var/log/nvidia-mps
+ExecStart=/usr/bin/nvidia-cuda-mps-control -d
+# Teardown lives in a script, NOT an inline ExecStop=: an inline `pkill -f
+# nvidia-cuda-mps-control` matches the stop command's own cmdline and kills itself, leaving the
+# unit `failed` and the pipe dir behind (observed live). The script escalates
+# quit -> quit_immediate -> SIGTERM and always exits 0.
+ExecStop=/usr/local/bin/fpr-mps-stop.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+User=root
+
+[Install]
+WantedBy=multi-user.target

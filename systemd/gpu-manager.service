@@ -1,0 +1,25 @@
+[Unit]
+Description=gpu-manager — Floating-Point Ranger GPU status, queue, and admission service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Root is required for the non-destructive flock probe on /run/gpu-*.lock (root-owned) and,
+# in Phase 2+, for starting model units. Revisit with a dedicated user at the OSS split.
+User=root
+Environment=GPU_MANAGER_CONFIG=/opt/gpu-manager/config.yaml
+EnvironmentFile=-/opt/gpu-manager/env
+ExecStart=/opt/gpu-manager/venv/bin/uvicorn gpu_manager.app:APP --host 0.0.0.0 --port 8768
+WorkingDirectory=/opt/gpu-manager
+Restart=always
+RestartSec=3
+# Hardening (read-only service in Phase 1)
+ProtectHome=read-only
+ProtectSystem=full
+ReadWritePaths=/run/gpu-manager
+RuntimeDirectory=gpu-manager
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

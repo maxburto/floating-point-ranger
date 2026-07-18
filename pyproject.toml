@@ -1,0 +1,30 @@
+[project]
+name = "floating-point-ranger"
+version = "0.2.0"
+description = "GPU arbitration for shared hosts: check-and-defer lease admission, model residency, stall detection, cross-node AMD reporting, and MPS batch concurrency — without ever preempting anything."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+    "nvidia-ml-py>=12.0",
+]
+
+[project.optional-dependencies]
+mcp = ["fastmcp>=2.0"]
+
+[project.urls]
+Homepage = "https://github.com/maxwellburton/floating-point-ranger"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["gpu_manager"]

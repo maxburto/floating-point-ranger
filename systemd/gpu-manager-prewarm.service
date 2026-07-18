@@ -1,0 +1,6 @@
+[Unit]
+Description=gpu-manager nightly model pre-warm (batch window 02:30-06:00)
+[Service]
+Type=oneshot
+ExecStart=/opt/gpu-manager/venv/bin/python -m gpu_manager.prewarm
+WorkingDirectory=/opt/gpu-manager

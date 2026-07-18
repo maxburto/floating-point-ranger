@@ -1,0 +1,7 @@
+[Unit]
+Description=Nightly gpu-manager model pre-warm
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=false
+[Install]
+WantedBy=timers.target
