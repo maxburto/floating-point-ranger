@@ -31,6 +31,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -39,7 +40,7 @@ from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from . import (admission, amd, config as _config, gates, models, mps, presence, probes, rogue,
-               sources, stall)
+               sources, stall, util)
 from .dashboard import PAGE
 
 CFG = _config.load()
@@ -47,8 +48,18 @@ LEASES = admission.Leases(CFG)
 
 
 async def _reaper() -> None:
+    # Each tick is guarded, the same way stall.run() guards its own: this used to be a bare
+    # `while True`, so ONE transient sqlite error (a lock timeout under concurrent admission,
+    # say) would kill the task for the entire life of the process — and asyncio swallows a
+    # dead task's exception, so nothing would surface. Lease expiry would silently stop
+    # forever, which is the difference between a bounded reservation and a permanently
+    # starved card. Log and keep ticking instead.
     while True:
-        await asyncio.to_thread(LEASES.reap)
+        try:
+            await asyncio.to_thread(LEASES.reap)
+        except Exception as e:  # noqa: BLE001
+            print(f"[reaper] tick failed ({e!r}) — retrying next interval",
+                  file=sys.stderr, flush=True)
         await asyncio.sleep(60)
 
 
@@ -74,7 +85,7 @@ async def _lifespan(app: FastAPI):
             await t
 
 
-APP = FastAPI(title="gpu-manager", version="0.4.0", lifespan=_lifespan)
+APP = FastAPI(title="gpu-manager", version="0.5.0", lifespan=_lifespan)
 
 
 def _auth(authorization: str | None) -> None:
@@ -114,10 +125,17 @@ def gpu_status() -> JSONResponse:
             "mem_total_mib": s.get("mem_total_mib"), "mem_used_mib": s.get("mem_used_mib"),
             "mem_free_mib": s.get("mem_free_mib"),
             "processes": s.get("processes", []),
+            # pid / pid_alive / stale_s are surfaced because a reservation that looks
+            # identical from here can be a working job or a dead holder's phantom, and
+            # without them an operator cannot tell which. The runbook's "check whether the
+            # pid is dead" step previously required going around this API to sqlite3.
             "leases": [{"id": h["id"], "initiator": h["initiator"], "label": h["label"],
                         "vram_mib": h["vram_mib"], "exclusive": bool(h["exclusive"]),
                         "owner": h["owner"], "capability": h["capability"],
                         "needs_model": h["needs_model"], "job_type": h["job_type"],
+                        "pid": h["pid"],
+                        "pid_alive": util.pid_alive(h["pid"]) if h["pid"] else None,
+                        "stale_s": round(time.time() - h["heartbeat"]),
                         "age_s": round(time.time() - h["created_at"])}
                        for h in LEASES.active(g.uuid)],
             "locks": locks,

@@ -14,11 +14,37 @@ ANY of which marks a lease ACTIVE — erring toward "alive" keeps the never-pree
 Off-host (no NVML) every lease reads inactive, which just means the stall loop falls through to
 the authoritative owner health-ping. The device-wide util comes from probes.nvml_snapshot's
 `util_gpu`; per-process smUtil from its `proc_util` (NOT_FOUND-tolerant → {}).
+
+Also holds `pid_alive()` — the process-liveness primitive that lets the reaper tell a
+DEAD-holder lease from a live-but-idle one.
 """
 from __future__ import annotations
 
+import os
+
 _last_vram: dict[int, int] = {}  # pid -> used_mib last tick (module-level churn memory)
 _VRAM_CHURN_MIB = 50
+
+
+def pid_alive(pid) -> bool:
+    """Does this pid still exist?
+
+    This is the distinction the whole zombie-reaping path turns on: a lease whose holder is
+    GONE has no work behind it, so expiring it is bookkeeping and the never-preempt invariant
+    does not apply. A lease whose holder is ALIVE but idle is the judgment call that
+    `stall_watch.enforce` gates.
+
+    Errs toward ALIVE by construction: a recycled pid (same number, unrelated process) reads
+    as alive, and that lease simply falls back to its full `ttl_s`. The only possible error is
+    reaping LATER than ideal — never expiring a live job's reservation early. That asymmetry
+    is why no pid-starttime bookkeeping is needed here.
+
+    A falsy pid returns False, but that is NOT the same as "pid gone": callers must handle
+    "no pid was ever registered" separately, since nothing can be concluded about such a lease.
+    """
+    if not pid:
+        return False
+    return os.path.exists(f"/proc/{pid}")
 
 
 def sample_activity(snap: dict, active_leases: list[dict], active_util_pct: int = 5) -> dict[str, bool]:

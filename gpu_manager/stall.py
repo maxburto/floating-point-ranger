@@ -164,6 +164,14 @@ def _tick(cfg: Config, leases: Leases) -> None:
             continue
         owner = h.get("owner") or owners.attribute(h.get("pid")).get("owner")
         vouch_s = "no" if vouch is False else "none"
+        # pid-gone vs pid-alive-but-idle are two different situations wearing the same badge.
+        # A dead holder is not a preemption question at all — the lease reaper expires it on
+        # `leases.zombie_ttl_s` without consulting `enforce`, because there is no work behind
+        # it. What `enforce` actually gates is the case below it: a process that is still
+        # RUNNING and merely looks idle, where evicting is a judgment call that can be wrong
+        # (and has been — see the observation-window review on #2028). Surfacing the two
+        # separately is what lets an operator read the Flagged panel and know which is which.
+        alive = util.pid_alive(h.get("pid"))
         if sw.enforce:
             action = "evicted: " + _evict(h, leases, pid_st0)
             # only for an actual MPS client: concurrency genuinely active AND this lease was
@@ -179,12 +187,16 @@ def _tick(cfg: Config, leases: Leases) -> None:
             _log(f"STALLED lease {lid[:8]} owner={owner} pid={h['pid']} label={h['label']} "
                  f"idle={int(idle_s)}s vouch={vouch_s} — {action}")
         else:
-            action = "would-evict (enforce off)"
+            action = ("awaiting zombie-ttl reap (holder pid gone)" if not alive
+                      else "would-evict (enforce off)")
             if lid not in _logged:  # de-dupe the flag-only log; the dashboard shows it every tick
-                _log(f"STALLED lease {lid[:8]} owner={owner} pid={h['pid']} label={h['label']} "
+                _log(f"STALLED lease {lid[:8]} owner={owner} pid={h['pid']} "
+                     f"pid_alive={alive} label={h['label']} "
                      f"idle={int(idle_s)}s vouch={vouch_s} — {action}")
                 _logged.add(lid)
         flagged.append({"lease_id": lid, "label": h["label"], "owner": owner, "pid": h["pid"],
+                        "pid_alive": alive,
+                        "kind": "pid-gone" if not alive else "pid-alive-idle",
                         "gpu_uuid": h["gpu_uuid"], "idle_s": int(idle_s), "vouch": vouch_s,
                         "action": action, "at": now})
     for lid in [k for k in _idle_since if k not in live_ids]:  # forget gone leases

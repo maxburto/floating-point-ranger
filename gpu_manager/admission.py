@@ -12,9 +12,10 @@ the interactive desktop, and only when `stall_watch.enforce` is on.) Decision in
      processes may not have allocated yet — both must cover the request plus a safety margin;
   3. per-GPU serial lanes ("exclusive" leases) — at most one exclusive lease per GPU.
 
-Leases are rows in a WAL SQLite DB (survives restarts). Holders heartbeat; a lease with no
-heartbeat for `ttl_s` is expired by the reaper (bookkeeping only — the process itself is
-never touched). Everything is observable via /v1/gpu/status and the dashboard.
+Leases are rows in a WAL SQLite DB (survives restarts). Holders heartbeat; the reaper expires a
+lease on either of two clocks — the short `leases.zombie_ttl_s` once its registered pid is
+provably GONE, or its own `ttl_s` otherwise (see `reap()`). Bookkeeping only: the process itself
+is never touched. Everything is observable via /v1/gpu/status and the dashboard.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ import threading
 import time
 import uuid as uuidlib
 
-from . import amd, mps, owners, probes
+from . import amd, mps, owners, probes, util
 from .config import Config
 
 MARGIN_MIB = 512  # safety margin between "free" and "grantable"
@@ -97,27 +98,57 @@ class Leases:
             return [dict(r) for r in self.conn.execute(q + " ORDER BY created_at", args)]
 
     def reap(self) -> int:
-        """Expire granted leases whose heartbeat is older than their ttl. Bookkeeping only —
-        and a lease whose registered pid is still ALIVE is never expired: a stalled-but-running
-        job outranks its own missed heartbeats, and dropping its row would also drop its VRAM
-        floor out of the admission math (over-admission on a card MPS deliberately packs
-        tighter). This guard used to be keyed on `exclusive`, which silently stopped protecting
-        EVERY batch job the moment Phase A made batch leases non-exclusive — precisely the class
-        of job it was written for."""
+        """Expire granted leases whose holder is gone or whose heartbeat has gone stale.
+
+        Bookkeeping only — a lease whose registered pid is still ALIVE is never expired: a
+        stalled-but-running job outranks its own missed heartbeats, and dropping its row would
+        also drop its VRAM floor out of the admission math (over-admission on a card MPS
+        deliberately packs tighter). This guard used to be keyed on `exclusive`, which silently
+        stopped protecting EVERY batch job the moment Phase A made batch leases non-exclusive —
+        precisely the class of job it was written for.
+
+        TWO clocks, because "the holder is dead" and "the holder stopped talking" are different
+        facts and only one of them is a judgment call:
+
+          pid-gone  — the lease registered a pid and that pid no longer exists. Nothing is
+                      running behind the reservation, so it expires after the much shorter
+                      `leases.zombie_ttl_s` rather than waiting out a CLIENT-chosen `ttl_s`
+                      that has no server-side ceiling. Not preemption: there is no process
+                      left to preempt, so this is deliberately NOT gated on
+                      `stall_watch.enforce`.
+          ttl       — the pre-existing path, unchanged. Covers leases that never registered a
+                      pid (about whose holder nothing can be concluded) and is the fallback
+                      whenever the short clock is disabled or has not yet elapsed.
+
+        Every expiry is logged with its reason. Before this, expiry was completely silent, so
+        "did the reaper ever run?" was unanswerable from the journal — which is exactly how a
+        lease released manually 5 minutes early got recorded as "never reaped" (FPR #1).
+        """
         now = time.time()
+        zttl = self.cfg.leases.zombie_ttl_s
         with self._lock:
             rows = self.conn.execute(
-                "SELECT id, pid, exclusive FROM lease "
-                "WHERE state='granted' AND ? - heartbeat > ttl_s", (now,)).fetchall()
-            expired = 0
+                "SELECT id, pid, initiator, label, vram_mib, gpu_uuid, heartbeat, ttl_s "
+                "FROM lease WHERE state='granted'").fetchall()
+            doomed: list[tuple] = []
             for r in rows:
-                if r["pid"] and os.path.exists(f"/proc/{r['pid']}"):
+                stale_s = now - r["heartbeat"]
+                # A pid we can still see = a live holder. Never expired, on either clock.
+                if r["pid"] and util.pid_alive(r["pid"]):
                     continue
+                if r["pid"] and zttl > 0 and stale_s > zttl:
+                    doomed.append((r, "pid-gone"))
+                elif stale_s > r["ttl_s"]:
+                    doomed.append((r, "ttl"))
+            for r, reason in doomed:
                 self.conn.execute(
                     "UPDATE lease SET state='expired', released_at=? WHERE id=?", (now, r["id"]))
-                expired += 1
+                print(f"[reaper] expired lease {r['id'][:8]} reason={reason} "
+                      f"initiator={r['initiator']} label={r['label']} pid={r['pid']} "
+                      f"vram_mib={r['vram_mib']} stale={int(now - r['heartbeat'])}s "
+                      f"ttl_s={r['ttl_s']} gpu={r['gpu_uuid']}", file=sys.stderr, flush=True)
             self.conn.commit()
-        return expired
+        return len(doomed)
 
     # -- admission ----------------------------------------------------------
     def _resolve_gpu(self, gpu: str, capability: str | None = None, vram_mib: int = 0) -> list:

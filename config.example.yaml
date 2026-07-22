@@ -42,3 +42,13 @@ sources: []
 #stall_watch:
 #  watch_interactive: true
 #  desktop_exempt_patterns: [blender, gimp, steam]
+
+# Dead-holder ("zombie") lease reaping. A granted lease whose registered pid no longer exists
+# has no work behind it, so it is expired after this many seconds of heartbeat silence rather
+# than waiting out the client-chosen ttl_s (which has no server-side ceiling — a client asking
+# for ttl_s: 900 keeps its full VRAM floor booked for 15 min after its process dies).
+# This is bookkeeping, not eviction: nothing is signalled, so it is deliberately independent of
+# stall_watch.enforce, which gates the different question of a live-but-idle job.
+# Applies only to leases that registered a pid. 0 disables the short clock (pure ttl_s).
+#leases:
+#  zombie_ttl_s: 300

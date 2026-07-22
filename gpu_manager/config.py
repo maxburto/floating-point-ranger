@@ -125,6 +125,27 @@ class MpsCfg:
 
 
 @dataclass
+class LeaseCfg:
+    """Dead-holder ("zombie") reaping.
+
+    A granted lease normally survives until its heartbeat is `ttl_s` stale — but `ttl_s` is
+    chosen by the CLIENT and has no server-side ceiling, so a holder that dies leaves its full
+    VRAM floor reserved for however long it asked for. On a small card that starves the card
+    behind a healthy-looking nvidia-smi (lived: a 5000 MiB phantom on an 8 GB card after a
+    service restart, with `ttl_s: 900`).
+
+    When the holder's pid is provably GONE there is no work to preempt, so this shorter clock
+    applies instead and the never-preempt invariant is untouched — this is bookkeeping, not
+    eviction. It is deliberately independent of `stall_watch.enforce`, which gates the genuinely
+    judgment-laden case: a lease whose process is still ALIVE but idle.
+
+    Applies ONLY to leases that registered a pid. A lease with no pid tells us nothing about its
+    holder, so it keeps waiting out its full `ttl_s`. 0 disables the short clock entirely.
+    """
+    zombie_ttl_s: int = 300
+
+
+@dataclass
 class Config:
     bind: str = "0.0.0.0"
     port: int = 8768
@@ -134,6 +155,7 @@ class Config:
     amd_poll_timeout_s: float = 3.0  # short: a slow agent must never stall admission
     rogue_watch: RogueWatchCfg = field(default_factory=RogueWatchCfg)
     stall_watch: StallWatchCfg = field(default_factory=StallWatchCfg)
+    leases: LeaseCfg = field(default_factory=LeaseCfg)
     gpus: list[GpuCfg] = field(default_factory=list)
     locks: list[LockCfg] = field(default_factory=list)
     sources: list[SourceCfg] = field(default_factory=list)
@@ -158,5 +180,8 @@ def load(path: str | None = None) -> Config:
         models=[ModelCfg(**m) for m in raw.get("models", [])],
         rogue_watch=RogueWatchCfg(**raw.get("rogue_watch", {})),
         stall_watch=StallWatchCfg(**raw.get("stall_watch", {})),
+        # Absent from an older live config file → the LeaseCfg default (300 s) applies, which is
+        # the intended behaviour: dead-holder reaping should not require a config edit to work.
+        leases=LeaseCfg(**raw.get("leases", {})),
         mps=MpsCfg(**raw.get("mps", {})),
     )
