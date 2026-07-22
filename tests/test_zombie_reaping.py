@@ -124,6 +124,28 @@ class TestZombieReaping(unittest.TestCase):
         L.reap()
         self.assertNotIn(r["lease_id"], self._ids(L), "ttl expiry itself must still work")
 
+    def test_model_manager_lease_is_exempt_from_the_short_clock(self):
+        """Model residency has its own lifecycle and must not be second-guessed here — the same
+        exemption stall.py makes.
+
+        The concrete trap: `models._drain_tick` heartbeats these leases with the systemd unit's
+        MainPID, but a DOCKER model's compute runs under an in-container pid, so the recorded
+        pid can be dead while the model is still resident holding real VRAM. `ensure()` reserves
+        the model's FULL floor while it loads, before that allocation exists — dropping it early
+        would admit batch work straight into memory the model is about to claim.
+        """
+        L = self._leases(zombie_ttl_s=300)
+        r = L.request(gpu=BATCH, initiator="model-manager", label="qwen3-vl-8b", vram_mib=7000,
+                      exclusive=False, ttl_s=2100, pid=_DEAD_PID)
+        self._age_heartbeat(L, r["lease_id"], 400)  # past zombie_ttl_s, well inside ttl_s
+        L.reap()
+        self.assertIn(r["lease_id"], self._ids(L),
+                      "a model reservation must keep its full ttl_s even with a dead unit pid")
+        self._age_heartbeat(L, r["lease_id"], 2200)  # now past its own ttl_s
+        L.reap()
+        self.assertNotIn(r["lease_id"], self._ids(L),
+                         "the ordinary ttl path must still apply to model leases")
+
     # -- the off switch ----------------------------------------------------
 
     def test_zombie_ttl_zero_restores_pure_ttl_behaviour(self):

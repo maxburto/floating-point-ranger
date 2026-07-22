@@ -136,7 +136,18 @@ class Leases:
                 # A pid we can still see = a live holder. Never expired, on either clock.
                 if r["pid"] and util.pid_alive(r["pid"]):
                     continue
-                if r["pid"] and zttl > 0 and stale_s > zttl:
+                # Model reservations are EXEMPT from the short clock — the same exemption
+                # stall.py already makes, for the same reason: residency has its own lifecycle
+                # (ensure -> idle-drain -> explicit release, with _reattach() adopting orphans
+                # across a manager restart) and must not be second-guessed by a generic reaper.
+                # The specific trap: models.py heartbeats these leases with the UNIT's MainPID,
+                # but a docker model's compute runs under an in-container pid — so the recorded
+                # pid can be dead while the model is still resident and holding real VRAM.
+                # Dropping a loading model's full floor early (ensure() reserves m.vram_mib
+                # before the allocation exists) would over-admit batch work straight into memory
+                # the model is about to take. They keep the unchanged ttl_s path.
+                is_model = r["initiator"] == "model-manager"
+                if r["pid"] and not is_model and zttl > 0 and stale_s > zttl:
                     doomed.append((r, "pid-gone"))
                 elif stale_s > r["ttl_s"]:
                     doomed.append((r, "ttl"))

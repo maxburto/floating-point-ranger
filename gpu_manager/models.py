@@ -17,6 +17,7 @@ processes are never touched. A nightly pre-warm window is a timer POSTing ensure
 from __future__ import annotations
 
 import asyncio
+import sys
 import subprocess
 import threading
 import time
@@ -68,7 +69,6 @@ def _reattach(m: ModelCfg, st: dict, leases: Leases) -> None:
     if res.get("granted"):
         st["lease_id"] = res["lease_id"]
     else:
-        import sys
         print(f"[models] WARNING: resident {m.name} has NO reservation "
               f"(reattach denied: {res.get('reasons')})", file=sys.stderr, flush=True)
 
@@ -147,6 +147,14 @@ def _drain_tick(cfg: Config, leases: Leases) -> None:
 
 
 async def drain_loop(cfg: Config, leases: Leases) -> None:
+    # Guarded per tick for the same reason the lease reaper is: an unguarded `while True`
+    # dies permanently on one transient error, and asyncio swallows the exception. Losing
+    # this loop silently stops both idle-drain AND the heartbeat that keeps each resident
+    # model's VRAM reservation bound to its unit pid.
     while True:
-        await asyncio.to_thread(_drain_tick, cfg, leases)
+        try:
+            await asyncio.to_thread(_drain_tick, cfg, leases)
+        except Exception as e:  # noqa: BLE001
+            print(f"[models] drain tick failed ({e!r}) — retrying next interval",
+                  file=sys.stderr, flush=True)
         await asyncio.sleep(60)
